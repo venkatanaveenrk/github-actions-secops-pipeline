@@ -1,0 +1,83 @@
+# =============================================================================
+#  PR Security Check — Fast feedback on every pull request
+#  Runs lightweight checks only (full scan runs on merge to main)
+#  Target: complete in under 5 minutes
+# =============================================================================
+
+name: PR Security Check
+
+on:
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+
+  # ── Quick secret scan ────────────────────────────────────────────────────────
+  quick-secret-scan:
+    name: 🔑 Secret Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks scan (PR diff only)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Quick dependency check ───────────────────────────────────────────────────
+  quick-dependency-check:
+    name: 📦 Dependency Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        working-directory: sample-app
+        run: npm ci
+
+      - name: Check for critical vulnerabilities only
+        working-directory: sample-app
+        run: npm audit --audit-level=critical
+
+  # ── Quick IaC check ──────────────────────────────────────────────────────────
+  quick-iac-check:
+    name: 🏗️ IaC Check
+    runs-on: ubuntu-latest
+    # Optional: only runs if a terraform/ directory is present in the repo.
+    if: hashFiles('terraform/**') != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkov fast scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: terraform
+          framework: terraform
+          output_format: cli
+          soft_fail: true
+          compact: true
+
+  # ── PR summary ───────────────────────────────────────────────────────────────
+  pr-summary:
+    name: 📋 PR Security Summary
+    runs-on: ubuntu-latest
+    needs: [quick-secret-scan, quick-dependency-check, quick-iac-check]
+    if: always()
+    steps:
+      - name: Post PR summary
+        run: |
+          echo "## 🔒 PR Security Check Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔑 Secrets | ${{ needs.quick-secret-scan.result == 'success' && '✅ Clean' || '❌ Secrets Found' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📦 Dependencies | ${{ needs.quick-dependency-check.result == 'success' && '✅ No Critical CVEs' || '❌ Critical CVEs Found' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏗️ Terraform | ${{ needs.quick-iac-check.result == 'success' && '✅ Clean' || needs.quick-iac-check.result == 'skipped' && '⏭️ Skipped (no terraform/)' || '⚠️ Misconfigs Found' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> Full security scan runs after merge to main" >> $GITHUB_STEP_SUMMARY

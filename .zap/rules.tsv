@@ -1,0 +1,23 @@
+# OWASP ZAP rules configuration
+# Format: rule_id  IGNORE/WARN/FAIL  description
+#
+# IGNORE = don't report
+# WARN   = report as warning (won't fail pipeline)
+# FAIL   = report as failure (will fail pipeline)
+
+# Ignore informational alerts that are expected in dev
+10015	IGNORE	Incomplete or No Cache-control Header Set
+10027	IGNORE	Information Disclosure - Suspicious Comments
+90005	IGNORE	Sec-Fetch-Dest Header is Missing
+
+# Warn on items that need review but shouldn't block
+10035	WARN	Strict-Transport-Security Header Not Set
+10037	WARN	Server Leaks Information via X-Powered-By
+
+# Fail pipeline on critical security issues
+40012	FAIL	Cross Site Scripting (Reflected)
+40014	FAIL	Cross Site Scripting (Persistent)
+40018	FAIL	SQL Injection
+40019	FAIL	SQL Injection - MySQL
+90019	FAIL	Server Side Code Injection - PHP Code Injection
+90020	FAIL	Remote OS Command Injection

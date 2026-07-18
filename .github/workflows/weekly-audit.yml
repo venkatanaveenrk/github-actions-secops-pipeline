@@ -1,0 +1,136 @@
+# =============================================================================
+#  Weekly Security Audit
+#  Scheduled run: every Monday at 2AM, but OFF by default.
+#  Enable by setting a repository variable ENABLE_WEEKLY_AUDIT=true
+#  (Settings → Secrets and variables → Actions → Variables). Until then, the
+#  scheduled trigger fires but the job skips immediately (near-zero cost).
+#  Manual runs (Actions tab → Run workflow) always work regardless.
+#  Creates GitHub Issue if vulnerabilities found.
+# =============================================================================
+
+name: Weekly Security Audit
+
+on:
+  schedule:
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+
+jobs:
+
+  full-audit:
+    name: 🔍 Full Security Audit
+    runs-on: ubuntu-latest
+    # Opt-in: scheduled runs only execute once ENABLE_WEEKLY_AUDIT=true is set
+    # as a repo variable. Manual "Run workflow" clicks always go through.
+    if: github.event_name == 'workflow_dispatch' || vars.ENABLE_WEEKLY_AUDIT == 'true'
+    permissions:
+      contents: read
+      issues: write
+      security-events: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        working-directory: sample-app
+        run: npm ci
+
+      # Full npm audit
+      - name: npm audit (all levels)
+        working-directory: sample-app
+        run: |
+          npm audit --json > npm-audit-full.json || true
+          npm audit || true
+
+      # Gitleaks full history scan
+      - name: Gitleaks full history scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      # Trivy full filesystem scan
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: json
+          output: trivy-full.json
+          severity: CRITICAL,HIGH,MEDIUM
+          exit-code: "0"
+
+      # Checkov full scan — optional, only runs if terraform/ is present
+      - name: Checkov full scan
+        if: hashFiles('terraform/**') != ''
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: terraform
+          framework: terraform
+          output_format: json
+          output_file_path: checkov-full.json
+          soft_fail: true
+
+      # Generate audit report and create issue if needed
+      - name: Generate audit report
+        id: audit
+        run: |
+          CRITICAL_COUNT=$(cat trivy-full.json | python3 -c "
+          import json,sys
+          data = json.load(sys.stdin)
+          count = 0
+          for result in data.get('Results', []):
+              for vuln in result.get('Vulnerabilities', []):
+                  if vuln.get('Severity') == 'CRITICAL':
+                      count += 1
+          print(count)
+          " 2>/dev/null || echo "0")
+
+          echo "critical_count=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
+          echo "## Weekly Security Audit — $(date +%Y-%m-%d)" >> $GITHUB_STEP_SUMMARY
+          echo "Critical vulnerabilities found: **$CRITICAL_COUNT**" >> $GITHUB_STEP_SUMMARY
+
+      # Create GitHub Issue if critical vulnerabilities found
+      - name: Create issue for critical vulnerabilities
+        if: steps.audit.outputs.critical_count != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 Weekly Audit: ${${{ steps.audit.outputs.critical_count }}} Critical Vulnerabilities Found`,
+              body: `## Security Audit Results — ${new Date().toISOString().split('T')[0]}
+
+            **Critical vulnerabilities found:** ${{ steps.audit.outputs.critical_count }}
+
+            ### Action Required
+            - [ ] Review Trivy scan results in workflow artifacts
+            - [ ] Update affected dependencies
+            - [ ] Re-run security scan after fixes
+            - [ ] Close this issue when resolved
+
+            **Workflow run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            /cc @${{ github.repository_owner }}`,
+              labels: ['security', 'critical', 'automated']
+            })
+
+      - name: Upload full audit artifacts
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: weekly-security-audit-${{ github.run_number }}
+          path: |
+            trivy-full.json
+            checkov-full.json
+            npm-audit-full.json
+          if-no-files-found: warn
+          retention-days: 90

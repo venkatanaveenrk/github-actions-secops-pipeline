@@ -1,0 +1,33 @@
+# Gitleaks configuration
+# Docs: https://github.com/gitleaks/gitleaks
+
+title = "DevSecOps Pipeline — Gitleaks Config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allowlisted files and patterns"
+files = [
+  '''^\.gitleaks\.toml$''',
+  '''(.*?)(jpg|gif|doc|pdf|bin|svg|socket)$''',
+]
+paths = [
+  '''node_modules''',
+  '''coverage''',
+  '''.terraform''',
+]
+commits = []
+
+# Custom rules for project-specific secrets
+[[rules]]
+description = "Azure Storage Account Key"
+id = "azure-storage-key"
+regex = '''DefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=[A-Za-z0-9+/=]{86}=='''
+tags = ["azure", "storage", "key"]
+
+[[rules]]
+description = "Azure Connection String"
+id = "azure-connection-string"
+regex = '''Server=tcp:[^,]+\.database\.windows\.net,1433;Initial Catalog=[^;]+;.*Password=[^;]+'''
+tags = ["azure", "database", "connection-string"]
