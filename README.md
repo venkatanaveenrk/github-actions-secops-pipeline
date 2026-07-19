@@ -232,4 +232,4 @@ MIT — free to use, fork, and adapt for your own projects.
 
 ---
 
-*Built by [Naveen](https://github.com/venkatanaveenrk) — Azure & DevOps Engineer*
+*Built by [venkatanaveenrk](https://github.com/venkatanaveenrk) — Azure & DevOps Engineer*
